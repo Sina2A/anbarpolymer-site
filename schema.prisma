@@ -1,0 +1,321 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==================== محصولات و قیمت ====================
+
+model Grade {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  producer       String
+  category       String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  priceRecords   PriceRecord[]
+  warehouseStock WarehouseStock[]
+  orderItems     OrderItem[]
+}
+
+model Warehouse {
+  id    String @id @default(cuid())
+  name  String
+  city  String
+
+  stock WarehouseStock[]
+}
+
+model WarehouseStock {
+  id          String   @id @default(cuid())
+  gradeId     String
+  warehouseId String
+  quantityTon Float
+  priceRial   Float
+  batch       String?
+  updatedAt   DateTime @updatedAt
+
+  grade     Grade     @relation(fields: [gradeId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+}
+
+model PriceRecord {
+  id        String   @id @default(cuid())
+  gradeId   String
+  incoterm  String
+  location  String
+  priceUsd  Float
+  country   String
+  hsCode    String?
+  source    String   @default("manual")
+  createdAt DateTime @default(now())
+
+  grade Grade @relation(fields: [gradeId], references: [id])
+}
+
+// ==================== کاربران، نقش‌ها و دسترسی‌ها ====================
+
+// نقش کلی حساب — فقط برای تفکیک درشت buyer از staff/admin.
+// دسترسی دقیق هر staff به هر بخش، جدا و دستی از طریق Permission تعیین می‌شود.
+model User {
+  id           String   @id @default(cuid())
+  companyName  String
+  phone        String   @unique
+  email        String?  @unique
+  passwordHash String
+  role         String   @default("buyer") // buyer | staff | admin
+  isActive     Boolean  @default(true)
+  language     String   @default("fa")
+  country      String   @default("IR")
+
+  // --- احراز هویت حساب (لایه‌ی ۱: User) ---
+  phoneVerified    Boolean   @default(false)
+  phoneVerifiedAt  DateTime?
+  emailVerified    Boolean   @default(false)
+  emailVerifiedAt  DateTime?
+  twoFactorEnabled Boolean   @default(false)
+  lastLoginAt      DateTime?
+
+  createdAt    DateTime @default(now())
+
+  orders            Order[]
+  permissions       Permission[]
+  performedEvents   StatusEvent[]      @relation("EventPerformedBy")
+  costEntries       CostEntry[]        @relation("CostCreatedBy")
+  materialListings  MaterialListing[]
+  loginEvents       LoginEvent[]
+  company           Company?
+}
+
+// تاریخچه‌ی ورود — برای امنیت (IPهای اخیر) و تشخیص ورود مشکوک.
+// چون هنوز سیستم ورود واقعی نداریم، این جدول آماده‌ست ولی فعلاً هیچ‌کس بهش نمی‌نویسه.
+model LoginEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  ipAddress String?
+  userAgent String?
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// ==================== لایه‌ی ۲: اطلاعات شرکت (Company) ====================
+
+model Company {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  legalType          String   // factory | production_unit | trading_company | cooperative | official_agent | importer | exporter
+  companyName        String
+  brandName          String?
+  nationalId         String?  // شناسه ملی
+  registrationNumber String?  // شماره ثبت
+  economicCode       String?
+  taxNumber          String?
+  foundedYear        Int?
+
+  country     String  @default("IR")
+  province    String?
+  city        String?
+  address     String?
+  postalCode  String?
+  companyPhone String?
+  website     String?
+
+  trustScore  Int      @default(0) // محاسبه‌ی دوره‌ای، نه لحظه‌ای — یک job جدا بعداً این رو آپدیت می‌کنه
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id])
+  businessProfile BusinessProfile?
+  kyc             Kyc?
+}
+
+// ==================== لایه‌ی ۳: پروفایل تجاری (Business Profile) ====================
+
+model BusinessProfile {
+  id                          String   @id @default(cuid())
+  companyId                   String   @unique
+  role                        String   @default("seller") // buyer | seller | both — برای انبار پلیمر فعلاً همیشه seller
+  activityDomain              String[] // Pipe, Film, Injection, Raffia, Sheet, Blow Molding, Masterbatch, Compound, Recycling
+  productsUsed                String[] // فهرست ساده برای شروع؛ ساختار درختی (PP→Random→PPR→EP548R) بعداً اضافه می‌شه
+  purchaseCapacityTier        String?  // under_20t | 20_100t | 100_500t | over_500t
+  monthlyConsumptionTon       Float?
+  productionCapacityTonPerYear Float?
+  targetMarkets                String[] // مثلاً ["ایران", "عراق", "افغانستان"]
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+// ==================== لایه‌ی ۴: احراز هویت تجاری (KYC) ====================
+
+model Kyc {
+  id        String   @id @default(cuid())
+  companyId String   @unique
+  level     Int      @default(0) // ۰: فقط موبایل تایید‌شده | ۱: مدارک آپلود‌شده | ۲: تایید ادمین | ۳: چند معامله موفق
+  badge     String   @default("none") // none | verified_company | trusted_supplier | trusted_buyer
+
+  officialGazetteFileUrl String? // روزنامه رسمی
+  nationalIdFileUrl      String? // تصویر شناسه ملی
+  businessCardFileUrl    String? // کارت بازرگانی (در صورت نیاز)
+  documentsSubmittedAt   DateTime?
+
+  // --- منبع احراز: تا وقتی API وصل نشده، همه‌چیز دستیه ---
+  verificationSource   String  @default("manual") // manual | api
+  verifiedByUserId     String? // کارشناس/ادمینی که دستی تایید کرده (وقتی manual)
+  apiIntegrationUsed   String? // کدوم API استفاده شده (وقتی api) — مثلاً "linka" یا "api_ir"
+  companyManagerMatch  Boolean? // نتیجه‌ی تطابق شخص↔شرکت (دستی یا از CheckCompanyManager)
+
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+// ==================== تنظیمات اتصال به API های بیرونی ====================
+
+// هر ردیف، یک سرویس‌دهنده‌ی بیرونیه (لینکا، api.ir، ...). چون فعلاً هیچ‌کدوم
+// وصل نیستن، isEnabled پیش‌فرض false ذخیره می‌شه — سیستم داخلی/دستی
+// (فیلدهای بالای Kyc) تا وصل‌شدن این‌ها جایگزینشونه.
+model ApiIntegration {
+  id             String   @id @default(cuid())
+  provider       String   @unique // "linka" | "api_ir"
+  displayName    String   // "لینکا (api.linka.ir)" | "api.ir"
+  baseUrl        String
+  authType       String   // "username_password" | "api_key" | "bearer_token"
+  username       String?  // برای لینکا (Auth/Login)
+  passwordHash   String?  // هیچ‌وقت متن خام ذخیره نشه
+  apiKey         String?
+  cachedToken    String?  // توکن دریافتی بعد از لاگین، کش‌شده تا انقضا
+  tokenExpiresAt DateTime?
+  isEnabled      Boolean  @default(false)
+  lastTestedAt   DateTime?
+  lastTestStatus String?  @default("not_tested") // not_tested | success | failed
+  costPerCallToman Float?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  endpoints ApiEndpointConfig[]
+}
+
+// هر endpoint خاصِ یک سرویس، جدا فعال/غیرفعال می‌شه — چون ممکنه فقط بعضی
+// از سرویس‌های یک اشتراک فعال باشن.
+model ApiEndpointConfig {
+  id            String  @id @default(cuid())
+  integrationId String
+  endpointKey   String  // شناسه‌ی داخلی، مثلاً "CheckCompanyManager"
+  displayName   String  // برچسب فارسی
+  path          String  // مسیر واقعی endpoint
+  method        String  @default("GET")
+  isEnabled     Boolean @default(false)
+  usedFor       String? // کجای سایت ازش استفاده می‌کنه (توضیح کوتاه)
+
+  integration ApiIntegration @relation(fields: [integrationId], references: [id])
+
+  @@unique([integrationId, endpointKey])
+}
+
+// دسترسی هر کارشناس به هر بخش پنل — همیشه دستی و تایید‌شده توسط ادمین ساخته می‌شود،
+// هیچ نقشی به‌طور خودکار دسترسی نمی‌گیرد.
+model Permission {
+  id        String   @id @default(cuid())
+  userId    String
+  section   String   // یکی از SECTION_KEYS در lib/permissions.ts — مثل "orders", "pricing", "warehouses", "material-listings", "users", "articles", "support"
+  canView   Boolean  @default(false)
+  canEdit   Boolean  @default(false)
+  grantedById String?
+  grantedAt DateTime @default(now())
+
+  user      User  @relation(fields: [userId], references: [id])
+
+  @@unique([userId, section])
+}
+
+// ==================== سفارش‌ها ====================
+
+model Order {
+  id        String   @id @default(cuid())
+  userId    String
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id])
+  items       OrderItem[]
+  costEntries CostEntry[]
+}
+
+model OrderItem {
+  id       String @id @default(cuid())
+  orderId  String
+  gradeId  String
+  quantity Float
+  price    Float
+
+  order Order @relation(fields: [orderId], references: [id])
+  grade Grade @relation(fields: [gradeId], references: [id])
+}
+
+// هزینه‌های واقعی هر سفارش — انبارداری، حمل، بیمه، بارگیری، آزمایشگاه و غیره.
+// جمع این‌ها کنار قیمت فروش، سود خالص واقعی هر سفارش رو محاسبه می‌کنه.
+model CostEntry {
+  id          String   @id @default(cuid())
+  orderId     String
+  type        String   // warehousing | shipping | insurance | loading | lab | other
+  amount      Float
+  note        String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  order     Order @relation(fields: [orderId], references: [id])
+  createdBy User? @relation("CostCreatedBy", fields: [createdById], references: [id])
+}
+
+// ==================== شبکه عرضه مواد اولیه ====================
+
+model MaterialListing {
+  id               String   @id @default(cuid())
+  userId           String
+  gradeName        String
+  quantityTon      Float
+  province         String
+  city             String
+  packagingType    String
+  packagingQuality String
+  materialQuality  String
+  askingPriceToman Float
+  validityStatus   String   @default("active") // active | cancelled | completed
+  bureaucracyStage String   @default("submitted") // به STAGE_KEYS در workflow.ts نگاه کن
+  feeStatus        String   @default("unpaid") // unpaid | pending_review | paid
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// ==================== تایم‌لاین وضعیت (Timeline Engine) ====================
+
+// یک لاگ چندریختی (polymorphic) برای Order، MaterialListing و SupportTicket.
+// هر رکورد از نوع دلخواه با recordType+recordId به رویدادهای مربوط به خودش وصل می‌شه.
+// این یعنی هر ۳ نوع رکورد از همین یک جدول تایم‌لاین می‌گیرن، بدون سه جدول جدا.
+model StatusEvent {
+  id            String   @id @default(cuid())
+  recordType    String   // "Order" | "MaterialListing" | "SupportTicket"
+  recordId      String
+  stageKey      String   // کلید خام مرحله (مثلاً "priced") — برای پرس‌وجوهای برنامه‌ای؛ برچسب فارسی در currentStage است
+  prevStage     String?
+  currentStage  String   // برچسب فارسی قابل‌نمایش، مثلاً "در حال تعیین قیمت توسط کارشناس"
+  nextStage     String?  // اگه چند مسیر ممکنه، این خالی/AWAITING_CURRENT می‌مونه (به‌جای گمراه‌کردن کارشناس)
+  note          String?
+  performedById String?
+  createdAt     DateTime @default(now())
+
+  performedBy User? @relation("EventPerformedBy", fields: [performedById], references: [id])
+
+  @@index([recordType, recordId])
+}
