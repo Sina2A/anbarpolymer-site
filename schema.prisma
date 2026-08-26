@@ -25,22 +25,11 @@ model Grade {
   density          Float?   // g/cm³ (طبق ASTM D792)
 
   originCountry    String   @default("IR") // IR یا کد کشور تامین‌کننده‌ی خارجی
+  imageUrl         String?  // عکس محصول
+  datasheetUrl     String?  // دیتاشیت فنی TDS به صورت PDF
+  specsJson        String?  // مشخصات فنی انتخابی هفتاد و دو فیلد استاندارد
   packagingType    String?  // کیسه ۲۵کیلویی | جامبوبگ | فله | ...
   description      String?  // توضیح آزاد کارشناس — کاربرد، ویژگی خاص، و غیره
-
-  // --- عکس محصول و دیتاشیت فنی ---
-  // هردو فقط آدرس فایل روی دیسک محلی سرورن (همون الگوی photoUrl و
-  // productionLicenseFileUrl) — نه خودِ فایل. وقتی فاز Storage ابری ساخته شد،
-  // فقط تابع ذخیره‌سازی عوض می‌شه، این فیلدها دست‌نخورده می‌مونن.
-  imageUrl     String?  // عکس محصول — برای نمایش توی صفحه‌ی عمومی گریدها
-  datasheetUrl String?  // دیتاشیت فنی (TDS) به‌صورت PDF
-
-  // --- مشخصات فنی انتخابی (از فهرست ۷۲ فیلد استاندارد ASTM/ISO) ---
-  // JSON از فیلدهایی که کارشناس برای همین گرید انتخاب و پر کرده، مثلاً
-  // {"tensileStrength":"32","izodImpact":"4.5"} — هر گرید فقط همون فیلدهایی
-  // رو داره که واقعاً براش اندازه‌گیری شده، نه ۷۲ ستون خالی توی دیتابیس.
-  // کلیدها از src/lib/gradeSpecs.ts میان (همون الگوی checklistJson).
-  specsJson    String?
 
   isActive      Boolean  @default(true) // غیرفعال (نه حذف) — چون رکوردهای قدیمی (سفارش/آگهی) بهش ارجاع دارن
   createdById   String?
@@ -51,6 +40,21 @@ model Grade {
   warehouseStock   WarehouseStock[]
   orderItems       OrderItem[]
   materialListings MaterialListing[]
+  documents        GradeDocument[]
+}
+
+// اسناد فنی تکمیلی گرید — چند سند PDF جداگانه علاوه بر دیتاشیت اصلی (datasheetUrl)
+model GradeDocument {
+  id        String   @id @default(cuid())
+  gradeId   String
+  title     String // عنوان نمایشی، مثلاً «گواهی آنالیز (COA) — بچ ۱۲۳»
+  docType   String   @default("other") // tds | sds | coa | certificate | other
+  fileUrl   String
+  createdAt DateTime @default(now())
+
+  grade Grade @relation(fields: [gradeId], references: [id])
+
+  @@index([gradeId])
 }
 
 model Warehouse {
@@ -300,14 +304,20 @@ model Deal {
   escrowConfirmedById String? // کدوم کارشناسِ حسابداری این وضعیت رو دستی ثبت کرده
   escrowConfirmedAt   DateTime?
 
+  // دستور پرداخت اختصاصی این معامله — متن آزاد کارشناس حسابداری برای خریدار (شرایط واریز و توضیحات)
+  paymentInstructionsText String?
+
   // --- شرکت حمل‌ونقل طرف‌قرارداد ---
   transportCompanyId String?
   transportCost      Float?   // هزینه‌ای که ما به شرکت حمل پرداخت می‌کنیم (جدا از پول خریدار/فروشنده)
   transportCostPaid  Boolean  @default(false)
 
-  // --- رسید پرداخت — آپلود توسط خریدار برای اثبات پرداخت (کارمزد یا پرداخت کامل) ---
-  paymentReceiptUrl          String?
-  paymentReceiptUploadedAt   DateTime?
+  // --- ردیابی زنده موقعیت (فقط آخرین نقطه، نه تاریخچه کامل مسیر) ---
+  currentLatitude   Float?
+  currentLongitude  Float?
+  locationUpdatedAt DateTime?
+  paymentReceiptUrl        String?
+  paymentReceiptUploadedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -392,6 +402,7 @@ model DealRuleSettings {
   discrepancyReportHours Int      @default(4)  // مهلت گزارش مغایرت خریدار، از لحظه‌ی تخلیه
   fundReleaseHours       Int      @default(8)  // مهلت آماده‌شدن واریز خودکار، از لحظه‌ی تخلیه
   driverSilenceDays      Int      @default(5)  // آستانه‌ی هشدار سکوت راننده، تقویمی (نه ساعت‌کاری)
+  proformaConfirmHours   Int      @default(8)  // مهلت تایید پیش‌فاکتور سفارش توسط مشتری، از ثبت قیمت کارشناس (ساعت کاری)
   updatedById            String?
   updatedAt              DateTime @updatedAt
 }
@@ -476,6 +487,7 @@ model TransportCompany {
   contactPhone  String?
   isActive      Boolean  @default(true)
   managerUserId String?  @unique // اکانت مدیر/مسئول این شرکت — برای ورود به پنل مخصوص خودشون
+  logisticsAccessEnabled Boolean @default(false) // دسترسی به پنل حمل (transport-panel) — جدا از isActive؛ قرارداد حمل ممکنه فعال باشه ولی پنل قطع
   createdAt     DateTime @default(now())
 
   deals       Deal[]
@@ -627,11 +639,17 @@ model Order {
   id        String   @id @default(cuid())
   userId    String
   status    String   @default("pending")
-  createdAt DateTime @default(now())
+  paymentReceiptUrl        String?
+  paymentReceiptUploadedAt DateTime?
+  paymentReceiptStatus     String?   @default("pending") // pending | approved | rejected
+  paymentReceiptReviewedById String?
+  paymentReceiptReviewedAt   DateTime?
 
-  // --- رسید پرداخت — آپلود توسط خریدار برای اثبات پرداخت ---
-  paymentReceiptUrl          String?
-  paymentReceiptUploadedAt   DateTime?
+  // مهلت تایید پیش‌فاکتور توسط مشتری — از لحظه‌ی ثبت قیمت نهایی توسط کارشناس فروش
+  // (setOrderPricing) با ساعت کاری محاسبه و ذخیره می‌شه (startProformaDeadline)؛
+  // اگه بدون تایید مشتری بگذره، سفارش خودکار باطل و موجودی به انبار برمی‌گرده.
+  proformaDeadline         DateTime?
+  createdAt DateTime @default(now())
 
   user        User        @relation(fields: [userId], references: [id])
   items       OrderItem[]
