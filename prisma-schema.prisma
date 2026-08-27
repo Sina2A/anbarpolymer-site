@@ -1,0 +1,797 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==================== محصولات و قیمت ====================
+
+model Grade {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  producer       String
+  category       String   // نوع ماده — پلی‌پروپیلن | پلی‌اتیلن | پی‌وی‌سی | ABS | PET | PS | ...
+
+  // --- مشخصات فنی — برای مقایسه‌ی گریدها بین برندهای مختلف ---
+  // این‌ها همون پارامترهای «استاندارد بین‌المللی» هستن که با همون روش
+  // (ASTM/ISO) روی هر گریدی، از هر برندی، اندازه‌گیری می‌شن — پس واقعاً
+  // قابل‌مقایسه‌ان، برخلاف خودِ کد گرید که هر برند دلخواه انتخاب می‌کنه.
+  polymerFamily    String?  // PP | PE | PVC | PET | PS | ABS | EPS | ...
+  applicationType  String?  // Injection | Extrusion | Blow Molding | Film | Fiber/Raffia | Pipe | Masterbatch | ...
+  mfi              Float?   // Melt Flow Index — g/10min
+  mfiTestCondition String?  // شرط تست، مثلاً "230°C/2.16kg" (طبق ASTM D1238)
+  density          Float?   // g/cm³ (طبق ASTM D792)
+
+  originCountry    String   @default("IR") // IR یا کد کشور تامین‌کننده‌ی خارجی
+  imageUrl         String?  // عکس محصول
+  datasheetUrl     String?  // دیتاشیت فنی TDS به صورت PDF
+  specsJson        String?  // مشخصات فنی انتخابی هفتاد و دو فیلد استاندارد
+  packagingType    String?  // کیسه ۲۵کیلویی | جامبوبگ | فله | ...
+  description      String?  // توضیح آزاد کارشناس — کاربرد، ویژگی خاص، و غیره
+
+  isActive      Boolean  @default(true) // غیرفعال (نه حذف) — چون رکوردهای قدیمی (سفارش/آگهی) بهش ارجاع دارن
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  priceRecords     PriceRecord[]
+  warehouseStock   WarehouseStock[]
+  orderItems       OrderItem[]
+  materialListings MaterialListing[]
+  documents        GradeDocument[]
+}
+
+// اسناد فنی تکمیلی گرید — چند سند PDF جداگانه علاوه بر دیتاشیت اصلی (datasheetUrl)
+model GradeDocument {
+  id        String   @id @default(cuid())
+  gradeId   String
+  title     String // عنوان نمایشی، مثلاً «گواهی آنالیز (COA) — بچ ۱۲۳»
+  docType   String   @default("other") // tds | sds | coa | certificate | other
+  fileUrl   String
+  createdAt DateTime @default(now())
+
+  grade Grade @relation(fields: [gradeId], references: [id])
+
+  @@index([gradeId])
+}
+
+model Warehouse {
+  id    String @id @default(cuid())
+  name  String
+  city  String
+
+  stock      WarehouseStock[]
+  orderItems OrderItem[]
+}
+
+model WarehouseStock {
+  id          String   @id @default(cuid())
+  gradeId     String
+  warehouseId String
+  quantityTon Float
+  priceRial   Float
+  batch       String?
+  updatedAt   DateTime @updatedAt
+
+  grade     Grade     @relation(fields: [gradeId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+}
+
+model PriceRecord {
+  id        String   @id @default(cuid())
+  gradeId   String
+  incoterm  String
+  location  String
+  priceUsd  Float
+  country   String
+  hsCode    String?
+  source    String   @default("manual")
+  createdAt DateTime @default(now())
+
+  grade Grade @relation(fields: [gradeId], references: [id])
+}
+
+// ==================== کاربران، نقش‌ها و دسترسی‌ها ====================
+
+// نقش کلی حساب — فقط برای تفکیک درشت buyer از staff/admin.
+// دسترسی دقیق هر staff به هر بخش، جدا و دستی از طریق Permission تعیین می‌شود.
+model User {
+  id           String   @id @default(cuid())
+  companyName  String
+  username     String?  @unique // برای ورود کارشناس/مدیر — خریدارها با phone وارد می‌شن
+  phone        String?  @unique // خریدارها الزامیه؛ کارشناس/مدیر می‌تونن نداشته باشن
+  email        String?  @unique
+
+  // --- محدودیت موقت — وقتی کسی (فروشنده یا خریدار) معامله رو معطل نگه داشته ---
+  // فروشنده: کارمزد رو سر وقت نداده. خریدار: بعد از تایید، پرداخت کامل رو تکمیل نکرده.
+  // تا این تاریخ، نمی‌تونه آگهی جدید ثبت کنه یا رزرو جدید بزنه.
+  restrictedUntil   DateTime?
+  restrictionReason String?
+  passwordHash String
+  role         String   @default("buyer") // buyer | staff | admin
+  isActive     Boolean  @default(true)
+  language     String   @default("fa")
+  country      String   @default("IR")
+
+  // --- احراز هویت حساب (لایه‌ی ۱: User) ---
+  phoneVerified    Boolean   @default(false)
+  phoneVerifiedAt  DateTime?
+  emailVerified    Boolean   @default(false)
+  emailVerifiedAt  DateTime?
+  twoFactorEnabled Boolean   @default(false)
+  lastLoginAt      DateTime?
+  passwordChangedAt DateTime? // برای اجرای سیاست انقضای رمز عبور (PasswordPolicy.expiryDays)
+
+  createdAt    DateTime @default(now())
+
+  orders            Order[]
+  permissions       Permission[]
+  performedEvents   StatusEvent[]      @relation("EventPerformedBy")
+  costEntries       CostEntry[]        @relation("CostCreatedBy")
+  materialListings  MaterialListing[]
+  loginEvents       LoginEvent[]
+  company           Company?
+  dealsAsBuyer      Deal[]             @relation("DealBuyer")
+  sessions          Session[]
+  transportCompanyManaged TransportCompany?
+  reviewsGiven      Review[]  @relation("ReviewsGiven")
+  reviewsReceived   Review[]  @relation("ReviewsReceived")
+  disputesRaised    Dispute[] @relation("DisputesRaised")
+  deadlineAdjustmentsMade DeadlineAdjustment[]
+  logs              SystemLog[]
+}
+
+// نشست ورود واقعی — یه توکن تصادفی که توی کوکی httpOnly ذخیره می‌شه.
+// هیچ JWT ای در کار نیست؛ هر بار که کاربر یه صفحه رو باز می‌کنه، این جدول چک می‌شه —
+// یعنی می‌شه هر لحظه یه نشست رو باطل کرد (مثلاً موقع خروج، یا اگه مشکوک بود).
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([token])
+}
+
+// تاریخچه‌ی ورود — برای امنیت (IPهای اخیر) و تشخیص ورود مشکوک.
+// چون هنوز سیستم ورود واقعی نداریم، این جدول آماده‌ست ولی فعلاً هیچ‌کس بهش نمی‌نویسه.
+model LoginEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  ipAddress String?
+  userAgent String?
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// ==================== لایه‌ی ۲: اطلاعات شرکت (Company) ====================
+
+model Company {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  legalType          String   // factory | production_unit | trading_company | cooperative | official_agent | importer | exporter
+  companyName        String
+  brandName          String?
+  nationalId         String?  // شناسه ملی
+  registrationNumber String?  // شماره ثبت
+  economicCode       String?
+  taxNumber          String?
+  foundedYear        Int?
+
+  country     String  @default("IR")
+  province    String?
+  city        String?
+  address     String?
+  postalCode  String?
+  companyPhone String?
+  website     String?
+
+  trustScore  Int      @default(0) // محاسبه‌ی دوره‌ای، نه لحظه‌ای — یک job جدا بعداً این رو آپدیت می‌کنه
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id])
+  businessProfile BusinessProfile?
+  kyc             Kyc?
+}
+
+// ==================== لایه‌ی ۳: پروفایل تجاری (Business Profile) ====================
+
+model BusinessProfile {
+  id                          String   @id @default(cuid())
+  companyId                   String   @unique
+  role                        String   @default("seller") // buyer | seller | both — برای انبار پلیمر فعلاً همیشه seller
+  activityDomain              String[] // Pipe, Film, Injection, Raffia, Sheet, Blow Molding, Masterbatch, Compound, Recycling
+  productsUsed                String[] // فهرست ساده برای شروع؛ ساختار درختی (PP→Random→PPR→EP548R) بعداً اضافه می‌شه
+  purchaseCapacityTier        String?  // under_20t | 20_100t | 100_500t | over_500t
+  monthlyConsumptionTon       Float?
+  productionCapacityTonPerYear Float?
+  targetMarkets                String[] // مثلاً ["ایران", "عراق", "افغانستان"]
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+// ==================== لایه‌ی ۴: احراز هویت تجاری (KYC) ====================
+
+model Kyc {
+  id        String   @id @default(cuid())
+  companyId String   @unique
+  level     Int      @default(0) // ۰: فقط موبایل تایید‌شده | ۱: مدارک شرکت آپلود‌شده | ۲: تایید ادمین (تولیدکننده) | ۳: چند معامله موفق
+  badge     String   @default("none") // none | verified_company | verified_producer | trusted_supplier | trusted_buyer
+
+  officialGazetteFileUrl String? // روزنامه رسمی
+  nationalIdFileUrl      String? // تصویر شناسه ملی
+  businessCardFileUrl    String? // کارت بازرگانی (در صورت نیاز)
+  documentsSubmittedAt   DateTime?
+
+  // --- احراز تولیدکننده — فقط برای کسی که می‌خواد توی سیستم Deal بفروشه ---
+  // «verified_producer» مهم‌ترین بج سیستمه؛ بدونش کاربر فقط می‌تونه بخره،
+  // نه بفروشه. شماره‌ی پروانه با شناسه‌ی ملی شرکت دستی روی behinyab.ir چک
+  // می‌شه (این سامانه API عمومی نداره، فقط یه پرتال وبه).
+  productionLicenseFileUrl   String? // پروانه بهره‌برداری (یا جواز تاسیس اگه در حال احداثه)
+  productionLicenseNumber    String?
+  productionLicenseIsSetup   Boolean? // true یعنی جواز تاسیس (واحد هنوز در حال احداث)، نه پروانه‌ی نهایی
+  factoryAddress              String?
+  factoryActivityType         String? // نوع فعالیت تولیدی
+  factoryProducts              String? // محصولات تولیدی، متنی آزاد برای شروع
+  producerDocumentsSubmittedAt DateTime?
+  producerLicenseVerifiedManually Boolean? // نتیجه‌ی تطبیق دستی کارشناس با behinyab.ir
+
+  // --- منبع احراز: تا وقتی API وصل نشده، همه‌چیز دستیه ---
+  verificationSource   String  @default("manual") // manual | api
+  verifiedByUserId     String? // کارشناس/ادمینی که دستی تایید کرده (وقتی manual)
+  apiIntegrationUsed   String? // کدوم API استفاده شده (وقتی api) — مثلاً "linka" یا "api_ir"
+  companyManagerMatch  Boolean? // نتیجه‌ی تطابق شخص↔شرکت (دستی یا از CheckCompanyManager)
+
+  // --- خروجی خام لینکا، وقتی apiIntegrationUsed="linka" باشه ---
+  linkaCompanyName String? // نام شرکتی که لینکا برگردونده (برای مقایسه با ورودی کاربر)
+  linkaManagerName String? // نام مدیرعامل ثبت‌شده طبق CompanyDirector
+  linkaCompanyStatus String? // فعال | منحل | ... طبق CompanyBaseInfo
+  linkaCheckedAt   DateTime? // زمان آخرین استعلام موفق
+  linkaRawResponse String? // JSON خام پاسخ، برای اسناد و بازبینی احتمالی بعدی
+
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+// ==================== سیستم معاملات تجاری (Deal) — جدا از Order ====================
+// Order: خودِ انبار پلیمر فروشنده‌ست. Deal: یه کارخانه‌ی دیگه می‌فروشه، ما فقط واسط/امین وضعیتیم.
+
+model Deal {
+  id               String   @id @default(cuid())
+  buyerId          String
+  materialListingId String? // اگه از شبکه عرضه مواد اولیه شروع شده باشه
+  quantity         String   // مثلاً "۱۵ تن" — متنی، چون واحدش متغیره
+  agreedPrice      String?  // قیمت نهایی توافق‌شده، بعد از تایید ادمین پر می‌شه
+
+  status String @default("draft")
+  // ترتیب دقیق: draft → confirmed → seller_fee_paid → payment_secured → loading → in_transit → delivered → settled
+  // یعنی کارمزد فروشنده باید قبل از پرداخت کامل خریدار تسویه بشه — این دو تا دیگه
+  // مسیر جدا و بی‌ربط به هم نیستن، بلکه یه توالی واحدن.
+
+  buyerConfirmDeadline DateTime? // مهلت ۷۲ساعت‌کاری خریدار برای تکمیل پرداخت کامل، بعد از تسویه‌ی کارمزد فروشنده
+
+  // --- چرخه‌ی بعد از تخلیه (بازطراحی‌شده: پیش‌فرض «تحویل‌شده و بدون مغایرت»، نه نیازمند تایید فعال خریدار) ---
+  // با تایید تخلیه‌ی راننده، دو تایمر همزمان (هر دو ساعت‌کاری) شروع می‌شن:
+  //   - discrepancyReportDeadline: ۴ساعت‌کاری — مهلت خریدار برای ثبت مغایرت
+  //   - fundReleaseDeadline: ۸ساعت‌کاری — واریز خودکار به فروشنده، مگراینکه مغایرتِ «حساس» ثبت شده باشه
+  // اگه مغایرت «حساس» (نه جزئی) ثبت بشه، fundReleaseFrozen=true می‌شه و دیگه واریز خودکار انجام نمی‌شه
+  // تا مدیر دستی تصمیم بگیره (نگاه کن به Dispute).
+  discrepancyReportDeadline DateTime?
+  fundReleaseDeadline       DateTime?
+  fundReleaseFrozen         Boolean   @default(false)
+  qualityAutoAccepted       Boolean   @default(false) // یعنی تا پایان مهلت ۴ساعته هیچ مغایرتی ثبت نشد
+
+  // اگه راننده بعد از بارگیری تا ۵ روز هیچ عملی (تخلیه یا هر رویداد دیگه) ثبت نکنه،
+  // این پرچم می‌خوره و رکورد توی admin-logistics با بردر قرمز فسفری مشخص می‌شه.
+  driverSilenceFlaggedAt DateTime?
+
+  // وضعیت وجه — فقط انعکاس وضعیت واقعی (که بیرون از سایت، توسط حسابداری انجام شده)
+  // نه اجرای واقعی تراکنش بانکی.
+  escrowStatus String @default("pending") // pending | secured_manual | released_manual
+  escrowConfirmedById String? // کدوم کارشناسِ حسابداری این وضعیت رو دستی ثبت کرده
+  escrowConfirmedAt   DateTime?
+
+  // دستور پرداخت اختصاصی این معامله — متن آزاد کارشناس حسابداری برای خریدار (شرایط واریز و توضیحات)
+  paymentInstructionsText String?
+
+  // --- شرکت حمل‌ونقل طرف‌قرارداد ---
+  transportCompanyId String?
+  transportCost      Float?   // هزینه‌ای که ما به شرکت حمل پرداخت می‌کنیم (جدا از پول خریدار/فروشنده)
+  transportCostPaid  Boolean  @default(false)
+
+  // --- ردیابی زنده موقعیت (فقط آخرین نقطه، نه تاریخچه کامل مسیر) ---
+  currentLatitude   Float?
+  currentLongitude  Float?
+  locationUpdatedAt DateTime?
+  paymentReceiptUrl        String?
+  paymentReceiptUploadedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  buyer            User               @relation("DealBuyer", fields: [buyerId], references: [id])
+  materialListing  MaterialListing?   @relation(fields: [materialListingId], references: [id])
+  transportCompany TransportCompany?  @relation(fields: [transportCompanyId], references: [id])
+  confirmations    DealConfirmation[]
+  driverLinks      DriverAccessLink[]
+  reviews          Review[]
+  disputes         Dispute[]
+  deadlineAdjustments DeadlineAdjustment[]
+}
+
+// ساعات کاری هفتگی — برای محاسبه‌ی دقیق مهلت‌های ساعت‌کاری (نه تقویمی).
+// اولویت با جدول Holiday هست (یعنی اگه یه روز خاص توی Holiday ثبت شده، همون
+// حاکمه، فارغ از این‌که اون روز هفته طبق این جدول عادی باشه)؛ این جدول فقط
+// برای الگوی *تکرارشونده‌ی* هرهفته‌ست (مثلاً «جمعه‌ها همیشه تعطیل»، یا ساعت
+// شروع/پایان کار هرروز). فقط مدیر (نه کارشناس) بهش دسترسی داره.
+// کد یک‌بارمصرف پیامکی — برای سه منظور جدا (purpose):
+//   signup_verify   → تایید شماره موبایل بعد از ثبت‌نام
+//   password_reset  → بازیابی رمز فراموش‌شده
+//   login           → ورود بدون رمز عبور (فقط با کد پیامکی)
+// کد هیچ‌وقت متن خام ذخیره نمی‌شه — با همون تابع hashPassword رمز عبور هش می‌شه.
+model OtpCode {
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String
+  purpose    String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0) // برای جلوگیری از حدس‌زدن کد با تلاش زیاد
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, purpose])
+}
+
+// لاگ واحد — هم خطای سیستمی هم فعالیت کاربر، توی یه جدول، قابل‌فیلتر با level.
+// level=error/warn/info → دیباگ فنی | level=audit → ردیابی رفتار کاربر
+// (کی چیکار کرد). همه از یه تابع (src/lib/logger.ts) نوشته می‌شن، پس همیشه
+// یه شکلن، نه پراکنده و ناهماهنگ.
+model SystemLog {
+  id        String   @id @default(cuid())
+  level     String   // error | warn | info | audit
+  category  String   // 'auth' | 'deal' | 'payment' | 'kyc' | 'system' | ...
+  message   String
+  userId    String?
+  path      String?  // مسیر صفحه/اکشنی که این اتفاق توش افتاد
+  metaJson  String?  // جزئیات اضافه (JSON) — stack trace، مقدار قبل/بعد، و غیره
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([level, createdAt])
+  @@index([category, createdAt])
+  @@index([userId])
+}
+
+// تنظیمات سیاست رمز عبور — یک ردیف واحد (singleton، id همیشه "singleton").
+// الهام‌گرفته از بخش «امنیت → سیاست رمز عبور» داناپرداز؛ فقط مدیر می‌تونه
+// تغییرش بده. expiryDays=null یعنی رمز هیچ‌وقت منقضی نمی‌شه.
+model PasswordPolicy {
+  id                  String    @id @default("singleton")
+  minLength           Int       @default(8)
+  requireNumber       Boolean   @default(false)
+  requireUppercase    Boolean   @default(false)
+  requireSpecialChar  Boolean   @default(false)
+  expiryDays          Int?      // null = بدون انقضا
+  updatedById         String?
+  updatedAt           DateTime  @updatedAt
+}
+
+// تنظیمات «طول» هر مهلت معامله — یک ردیف واحد (singleton)، قابل‌تغییر توسط
+// کارشناس/مدیر از پنل. جدا از WeeklyBusinessHour/Holiday که «کِی سایت بازه»
+// رو مشخص می‌کنن؛ این مدل مشخص می‌کنه «هر مهلت چند ساعت/روز کاری طول بکشه».
+// مقادیر پیش‌فرض دقیقاً همون چیزیه که تا الان توی کد ثابت بود — یعنی تا
+// کسی دستی تغییرش نده، رفتار سایت هیچ فرقی نمی‌کنه.
+model DealRuleSettings {
+  id                     String   @id @default("singleton")
+  sellerFeeHours         Int      @default(24) // مهلت پرداخت کارمزد فروشنده، از تایید رزرو
+  buyerPaymentHours      Int      @default(72) // مهلت پرداخت کامل خریدار، از تسویه‌ی کارمزد فروشنده
+  discrepancyReportHours Int      @default(4)  // مهلت گزارش مغایرت خریدار، از لحظه‌ی تخلیه
+  fundReleaseHours       Int      @default(8)  // مهلت آماده‌شدن واریز خودکار، از لحظه‌ی تخلیه
+  driverSilenceDays      Int      @default(5)  // آستانه‌ی هشدار سکوت راننده، تقویمی (نه ساعت‌کاری)
+  proformaConfirmHours   Int      @default(8)  // مهلت تایید پیش‌فاکتور سفارش توسط مشتری، از ثبت قیمت کارشناس (ساعت کاری)
+  updatedById            String?
+  updatedAt              DateTime @updatedAt
+}
+
+model WeeklyBusinessHour {
+  id        String  @id @default(cuid())
+  dayOfWeek Int     @unique // 0=یکشنبه ... 6=شنبه (مطابق getDay() جاوااسکریپت)
+  isOpen    Boolean @default(true)
+  openTime  String  @default("08:00") // "HH:MM", ۲۴ساعته
+  closeTime String  @default("17:00")
+}
+
+// تعطیلات رسمی/عمومی — برای محاسبه‌ی مهلت‌های ساعت‌کاری (کارمزد، پرداخت، مغایرت، واریز).
+// عمداً یه جدول ساده‌ی قابل‌مدیریت از پنل ادمینه، نه لیست ثابت توی کد — چون
+// تعطیلات هرسال (و گاهی با اعلام ناگهانی دولت) تغییر می‌کنه و نباید نیاز به
+// دیپلوی کد جدید داشته باشه. جمعه‌ها جدا و همیشه محاسبه می‌شن، نیازی به ثبت ندارن.
+model Holiday {
+  id        String   @id @default(cuid())
+  date      DateTime @unique // فقط بخش تاریخ مهمه؛ ساعت نادیده گرفته می‌شه
+  title     String?
+  createdAt DateTime @default(now())
+}
+
+// ثبت هر تغییر دستی روی مهلت‌های یه Deal — برای شفافیت داخلی و مستندسازی،
+// چون تغییر مهلت (مثلاً تمدید ۱۲ ساعته) می‌تونه توی رسیدگی به اختلاف بعدی
+// اهمیت داشته باشه. هرگز مهلت رو مستقیم دستکاری نکن بدون ثبت این رکورد.
+model DeadlineAdjustment {
+  id             String   @id @default(cuid())
+  dealId         String
+  field          String   // buyerConfirmDeadline | discrepancyReportDeadline | fundReleaseDeadline
+  previousValue  DateTime?
+  newValue       DateTime
+  hoursDelta     Float    // مثبت = تمدید، منفی = کوتاه‌کردن
+  reason         String
+  adjustedById   String
+  createdAt      DateTime @default(now())
+
+  deal        Deal @relation(fields: [dealId], references: [id])
+  adjustedBy  User @relation(fields: [adjustedById], references: [id])
+}
+
+// امتیازدهی دوطرفه — بعد از settled شدن یه معامله، هر دو طرف می‌تونن
+// همدیگه رو امتیاز بدن. هر نفر فقط یه‌بار برای هر معامله.
+model Review {
+  id          String   @id @default(cuid())
+  dealId      String
+  raterUserId String   // کی امتیاز داده
+  ratedUserId String   // به کی امتیاز داده شده
+  rating      Int      // ۱ تا ۵
+  comment     String?
+  createdAt   DateTime @default(now())
+
+  deal  Deal @relation(fields: [dealId], references: [id])
+  rater User @relation("ReviewsGiven", fields: [raterUserId], references: [id])
+  rated User @relation("ReviewsReceived", fields: [ratedUserId], references: [id])
+
+  @@unique([dealId, raterUserId])
+}
+
+// فرآیند رسیدگی به اختلاف — وقتی تاییدیه‌ی خریدار «مغایرت دارد» یا «رد» باشه،
+// خودکار یه Dispute باز می‌شه؛ ادمین بررسی و با یه نتیجه‌ی مکتوب می‌بندتش.
+model Dispute {
+  id           String    @id @default(cuid())
+  dealId       String
+  raisedById   String
+  reason       String
+  status       String    @default("open") // open | resolved | rejected
+  resolution   String?
+  resolvedById String?
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  deal     Deal @relation(fields: [dealId], references: [id])
+  raisedBy User @relation("DisputesRaised", fields: [raisedById], references: [id])
+}
+
+// شرکت‌های حمل‌ونقل طرف‌قرارداد — رابطه‌ی مالی جدا: ما به این‌ها پرداخت می‌کنیم،
+// جدا از پول خریدار/فروشنده.
+model TransportCompany {
+  id            String   @id @default(cuid())
+  name          String
+  contactPhone  String?
+  isActive      Boolean  @default(true)
+  managerUserId String?  @unique // اکانت مدیر/مسئول این شرکت — برای ورود به پنل مخصوص خودشون
+  logisticsAccessEnabled Boolean @default(false) // دسترسی به پنل حمل (transport-panel) — جدا از isActive؛ قرارداد حمل ممکنه فعال باشه ولی پنل قطع
+  createdAt     DateTime @default(now())
+
+  deals       Deal[]
+  drivers     Driver[]
+  managerUser User?     @relation(fields: [managerUserId], references: [id])
+}
+
+// فلوت راننده‌های هر شرکت حمل — ثبت‌شده توسط خودِ مدیر شرکت حمل، نه ما.
+// هدف صریح: احراز هویت راننده و مسیر برای الزامات امنیتی/حساسیت صنعت مواد اولیه
+// نفتی ایران — نه ردیابی مسافت یا عملکرد راننده برای اهداف هزینه‌ای.
+model Driver {
+  id                 String   @id @default(cuid())
+  transportCompanyId String
+  fullName           String
+  phone              String
+  nationalId         String?
+  licenseNumber      String?
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+
+  transportCompany TransportCompany   @relation(fields: [transportCompanyId], references: [id])
+  confirmations    DealConfirmation[]
+}
+
+// هر رویداد بارگیری/تخلیه/تاییدیه — با GPS و عکس، طبق فرم‌های ساختاریافته‌ای
+// که طراحی کردیم (فرم جدا از عکس؛ عکس فقط یه Evidence جانبیه).
+model DealConfirmation {
+  id     String @id @default(cuid())
+  dealId String
+  type   String // loading | unloading | driver_confirm | buyer_confirm
+
+  // --- اطلاعات راننده و خودرو (فقط برای loading/unloading) ---
+  driverId      String? // اگه راننده جزو فلوت یه شرکت طرف‌قرارداده، به رکورد Driver وصل می‌شه
+  driverName    String?
+  driverPhone   String?
+  vehiclePlate  String?
+  vehicleType   String? // truck | trailer | khavar | pickup
+
+  // --- اطلاعات تخلیه (فقط برای unloading) ---
+  receiverName String?
+  receiverRole String? // مدیر خرید | انباردار | مسئول کنترل کیفیت
+
+  // --- چک‌لیست وضعیت — ساختاریافته، جدا از عکس ---
+  checklistJson String // JSON از چک‌باکس‌های تیک‌خورده، مثلاً {"packagingIntact":true,"quantityMatches":true}
+
+  // --- عکس: فقط یک Evidence جانبی، نه داده‌ی اصلی ---
+  photoUrl String?
+
+  // --- GPS: سیگنال کمکی و بازدارنده، نه مدرک قانونی قطعی ---
+  latitude    Float?
+  longitude   Float?
+  gpsAccuracy Float?
+
+  // --- تایید نهایی (فقط برای buyer_confirm) ---
+  // بازطراحی‌شده: پیش‌فرض سیستم «بدون مغایرت»ه، این رکورد فقط وقتی خریدار
+  // فعالانه یه مشکل گزارش کنه ساخته می‌شه (یا در نبود گزارش، سیستم خودش
+  // auto_no_discrepancy رو در پایان مهلت ۴ساعته ثبت می‌کنه — صرفاً برای ثبت
+  // شفاف در تاریخچه، نه به این معنی که خریدار کاری کرده).
+  finalVerdict String? // auto_no_discrepancy | discrepancy_minor | discrepancy_severe
+  discrepancySeverity String? // minor | severe — null یعنی گزارشی نبوده
+  discrepancyItemsJson String? // JSON آرایه‌ی موارد انتخاب‌شده، مثلاً ["کسری بیش از ۵۰کیلوگرم"]
+  discrepancyNote      String? // توضیح آزاد خریدار
+
+  confirmedAt DateTime @default(now())
+
+  deal   Deal    @relation(fields: [dealId], references: [id])
+  driver Driver? @relation(fields: [driverId], references: [id])
+
+  @@index([dealId])
+}
+
+// لینک یک‌بارمصرف پیامکی برای راننده — بدون نیاز به ساخت حساب کاربری.
+// طبق طراحی: راننده کاربر دائمی سیستم نیست، فقط یه لینک امن موقت می‌گیره.
+model DriverAccessLink {
+  id        String   @id @default(cuid())
+  dealId    String
+  token     String   @unique
+  phone     String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  deal Deal @relation(fields: [dealId], references: [id])
+}
+
+// ==================== تنظیمات اتصال به API های بیرونی ====================
+
+// هر ردیف، یک سرویس‌دهنده‌ی بیرونیه (لینکا، api.ir، ...). چون فعلاً هیچ‌کدوم
+// وصل نیستن، isEnabled پیش‌فرض false ذخیره می‌شه — سیستم داخلی/دستی
+// (فیلدهای بالای Kyc) تا وصل‌شدن این‌ها جایگزینشونه.
+model ApiIntegration {
+  id             String   @id @default(cuid())
+  provider       String   @unique // "linka" | "api_ir"
+  displayName    String   // "لینکا (api.linka.ir)" | "api.ir"
+  baseUrl        String
+  authType       String   // "username_password" | "api_key" | "bearer_token"
+  username       String?  // برای لینکا (Auth/Login)
+  passwordHash   String?  // هیچ‌وقت متن خام ذخیره نشه
+  apiKey         String?
+  cachedToken    String?  // توکن دریافتی بعد از لاگین، کش‌شده تا انقضا
+  tokenExpiresAt DateTime?
+  isEnabled      Boolean  @default(false)
+  lastTestedAt   DateTime?
+  lastTestStatus String?  @default("not_tested") // not_tested | success | failed
+  costPerCallToman Float?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  endpoints ApiEndpointConfig[]
+}
+
+// هر endpoint خاصِ یک سرویس، جدا فعال/غیرفعال می‌شه — چون ممکنه فقط بعضی
+// از سرویس‌های یک اشتراک فعال باشن.
+model ApiEndpointConfig {
+  id            String  @id @default(cuid())
+  integrationId String
+  endpointKey   String  // شناسه‌ی داخلی، مثلاً "CheckCompanyManager"
+  displayName   String  // برچسب فارسی
+  path          String  // مسیر واقعی endpoint
+  method        String  @default("GET")
+  isEnabled     Boolean @default(false)
+  usedFor       String? // کجای سایت ازش استفاده می‌کنه (توضیح کوتاه)
+
+  integration ApiIntegration @relation(fields: [integrationId], references: [id])
+
+  @@unique([integrationId, endpointKey])
+}
+
+// دسترسی هر کارشناس به هر بخش پنل — همیشه دستی و تایید‌شده توسط ادمین ساخته می‌شود،
+// هیچ نقشی به‌طور خودکار دسترسی نمی‌گیرد.
+model Permission {
+  id        String   @id @default(cuid())
+  userId    String
+  section   String   // یکی از SECTION_KEYS در lib/permissions.ts — مثل "orders", "pricing", "warehouses", "material-listings", "users", "articles", "support"
+  canView   Boolean  @default(false)
+  canEdit   Boolean  @default(false)
+  grantedById String?
+  grantedAt DateTime @default(now())
+
+  user      User  @relation(fields: [userId], references: [id])
+
+  @@unique([userId, section])
+}
+
+// ==================== سفارش‌ها ====================
+
+model Order {
+  id        String   @id @default(cuid())
+  userId    String
+  status    String   @default("pending")
+  paymentReceiptUrl        String?
+  paymentReceiptUploadedAt DateTime?
+  paymentReceiptStatus     String?   @default("pending") // pending | approved | rejected
+  paymentReceiptReviewedById String?
+  paymentReceiptReviewedAt   DateTime?
+
+  // مهلت تایید پیش‌فاکتور توسط مشتری — از لحظه‌ی ثبت قیمت نهایی توسط کارشناس فروش
+  // (setOrderPricing) با ساعت کاری محاسبه و ذخیره می‌شه (startProformaDeadline)؛
+  // اگه بدون تایید مشتری بگذره، سفارش خودکار باطل و موجودی به انبار برمی‌گرده.
+  proformaDeadline         DateTime?
+  createdAt DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id])
+  items       OrderItem[]
+  costEntries CostEntry[]
+  invoice     Invoice?
+}
+
+model OrderItem {
+  id       String @id @default(cuid())
+  orderId  String
+  gradeId  String
+  warehouseId String?
+  quantity Float
+
+  // --- قفل قیمت لحظه‌ی ثبت RFQ ---
+  // price همیشه قیمت مرجعی است که لحظه‌ی ثبت درخواست snapshot گرفته شده،
+  // نه لینک زنده به قیمت روز — تا نوسان بازار بعد از ثبت، درخواست رو تغییر نده.
+  price           Float    // قیمت مرجع snapshot شده (ریال/کیلوگرم)
+  priceSnapshotAt DateTime @default(now())
+  priceValidUntil DateTime // بعد از این زمان، این قیمت دیگه معتبر نیست؛ باید توسط کارشناس فروش دوباره تایید بشه
+  finalPrice      Float?   // قیمت نهایی توافق‌شده — جدا از price مرجع، توسط کارشناس فروش در مرحله‌ی priced پر می‌شه
+
+  order     Order      @relation(fields: [orderId], references: [id])
+  grade     Grade      @relation(fields: [gradeId], references: [id])
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id])
+}
+
+// هزینه‌های واقعی هر سفارش — انبارداری، حمل، بیمه، بارگیری، آزمایشگاه و غیره.
+// جمع این‌ها کنار قیمت فروش، سود خالص واقعی هر سفارش رو محاسبه می‌کنه.
+model CostEntry {
+  id          String   @id @default(cuid())
+  orderId     String
+  type        String   // warehousing | shipping | insurance | loading | lab | other
+  amount      Float
+  note        String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  order     Order @relation(fields: [orderId], references: [id])
+  createdBy User? @relation("CostCreatedBy", fields: [createdById], references: [id])
+}
+
+// ==================== فاکتور رسمی ====================
+
+// فاکتور رسمی هر سفارش — بعد از تایید فیش پرداخت توسط کارشناس مالی، خودکار
+// صادر می‌شه (issueInvoiceForOrder در lib/invoices.ts). هر سفارش حداکثر یک
+// فاکتور می‌گیره، پس orderId یکتاست و صدور دوباره همون رکورد قبلی رو برمی‌گردونه.
+//
+// شماره‌ی فاکتور از دو تیکه ساخته می‌شه: سال مالی شمسی + شمارنده‌ی ترتیبی همون
+// سال (fiscalYear + seq)، مثل "AP-1404-00001". قید @@unique([fiscalYear, seq])
+// تضمین می‌کنه دو صدور همزمان شماره‌ی تکراری نگیرن — در صورت رقابت، خطای یکتایی
+// می‌خوره و صدور با شمارنده‌ی بعدی تکرار می‌شه.
+//
+// مبالغ اینجا snapshot لحظه‌ی صدورن، نه محاسبه‌ی زنده از OrderItem — چون یه سند
+// مالی صادرشده نباید با تغییرات بعدی سفارش عوض بشه.
+model Invoice {
+  id         String @id @default(cuid())
+  orderId    String @unique
+  number     String @unique
+  fiscalYear Int
+  seq        Int
+
+  // --- snapshot خریدار و مبالغ (ریال) ---
+  buyerCompanyName String
+  itemsTotal       Float
+  vatRate          Float @default(0.09)
+  vatAmount        Float
+  totalAmount      Float
+
+  status     String   @default("issued") // issued | cancelled
+  // کارشناس مالی که فیش رو تایید کرد — مثل paymentReceiptReviewedById عمداً
+  // رابطه‌ی نام‌دار نداره؛ اسمش با یه کوئری جدا روی User گرفته می‌شه.
+  issuedById String?
+  issuedAt   DateTime @default(now())
+  pdfUrl     String?  // فایل رسمی امضاشده — پس از اتصال آبجکت‌استوریج پر می‌شه
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@unique([fiscalYear, seq])
+}
+
+// ==================== شبکه عرضه مواد اولیه ====================
+
+model MaterialListing {
+  id               String   @id @default(cuid())
+  userId           String
+  // توجه: قبلاً اینجا یه فیلد متنی آزاد (gradeName) بود که فروشنده خودش
+  // تایپ می‌کرد — این یعنی امکان غلط‌تایپی، ناهماهنگی اسم بین آگهی‌های
+  // مختلف، و بی‌فایده‌شدن کاتالوگ گریدهای خودمون. الان اجباراً از همون
+  // دیتابیس گریدها (Grade) انتخاب می‌شه.
+  gradeId          String
+  quantityTon      Float
+  // توجه: هیچ رزرو جزئی نداریم — کل آگهی یک‌جا می‌ره به یه خریدار.
+  // «آزاد بودن برای رزرو» رو validityStatus مشخص می‌کنه (چراغ معامله)، نه یه فیلد مقدار جدا.
+  province         String
+  city             String
+  packagingType    String
+  packagingQuality String
+  materialQuality  String
+  askingPriceToman Float
+  validityStatus   String   @default("active") // active (آزاد/سبز) | reserved (در حال معامله/زرد) | needs_reverification (کارمزد سر وقت پرداخت نشد، نیازمند تایید دستی کارشناس قبل از آزادسازی مجدد) | completed (انجام‌شده) | cancelled
+  bureaucracyStage String   @default("submitted") // به STAGE_KEYS در workflow.ts نگاه کن
+  feeStatus        String   @default("unpaid") // unpaid | pending_review | paid
+  feeDeadline      DateTime? // مهلت پرداخت کارمزد فروشنده، از لحظه‌ای که خریدار پیدا شد و ادمین قیمت رو تایید کرد
+  createdAt        DateTime @default(now())
+
+  // --- قبض باسکولِ لحظه‌ی ثبت (فیلتر اولیه، اجباری) ---
+  // این جدا از قبض باسکولِ لحظه‌ی بارگیری واقعیه (که روی DealConfirmation ثبت می‌شه).
+  // این یکی فقط جواب می‌ده «این فروشنده اخیراً واقعاً همچین باری داشته؟» — نه اثبات نهایی.
+  weighbridgeTicketUrl   String   // عکس قبض — اجباری، بدون این نمی‌شه ثبت کرد
+  weighbridgeNetWeightKg Float    // وزن خالص روی قبض
+  weighbridgeDate        DateTime // تاریخ قبض — باید همون روز ثبت باشه
+  weighbridgePlate       String?  // پلاک روی قبض (اختیاری، برای مرجع)
+
+  // --- بررسی ادمین ---
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  user  User   @relation(fields: [userId], references: [id])
+  grade Grade  @relation(fields: [gradeId], references: [id])
+  deals Deal[]
+}
+
+// ==================== تایم‌لاین وضعیت (Timeline Engine) ====================
+
+// یک لاگ چندریختی (polymorphic) برای Order، MaterialListing و SupportTicket.
+// هر رکورد از نوع دلخواه با recordType+recordId به رویدادهای مربوط به خودش وصل می‌شه.
+// این یعنی هر ۳ نوع رکورد از همین یک جدول تایم‌لاین می‌گیرن، بدون سه جدول جدا.
+model StatusEvent {
+  id            String   @id @default(cuid())
+  recordType    String   // "Order" | "MaterialListing" | "SupportTicket"
+  recordId      String
+  stageKey      String   // کلید خام مرحله (مثلاً "priced") — برای پرس‌وجوهای برنامه‌ای؛ برچسب فارسی در currentStage است
+  prevStage     String?
+  currentStage  String   // برچسب فارسی قابل‌نمایش، مثلاً "در حال تعیین قیمت توسط کارشناس"
+  nextStage     String?  // اگه چند مسیر ممکنه، این خالی/AWAITING_CURRENT می‌مونه (به‌جای گمراه‌کردن کارشناس)
+  note          String?
+  performedById String?
+  createdAt     DateTime @default(now())
+
+  performedBy User? @relation("EventPerformedBy", fields: [performedById], references: [id])
+
+  @@index([recordType, recordId])
+}
