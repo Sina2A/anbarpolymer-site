@@ -1,0 +1,170 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRISMA SCHEMA DELTA FIX2 — GROUP 18: فیلدهای اضافه‌شونده به مدل‌های موجود
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// این فایل صرفاً فیلدهایی را تعریف می‌کند که باید به مدل‌های موجود
+// در schema.prisma اضافه شوند تا با app-admin-pricing-actions.ts و
+// app-admin-pricing-page.tsx هماهنگ شوند.
+//
+// ⚠️ این فایل جایگزین prisma-schema-delta-group-18.prisma نیست.
+//    هر دو فایل باید اعمال شوند: ابتدا delta اصلی، سپس این fix2.
+//
+// روش استفاده: در هر بلوک زیر، فیلدهای جدید را به مدل مربوطه در
+// schema.prisma اضافه کنید. فیلدهای موجود را تغییر ندهید.
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ┌─────────────────────────────────────────────────────────────────────────────
+// │ ۱. PriceFormulaRule — اضافه کردن الگوی toggle دستی/API
+// └─────────────────────────────────────────────────────────────────────────────
+//
+// فیلدهای موجود در delta اصلی (نگه‌داشته می‌شوند):
+//   name, baseFormula, transportFactor, insuranceFactor, taxFactor
+//
+// فیلدهای جدید اضافه‌شونده:
+//
+model PriceFormulaRule {
+  // ── فیلدهای جدید ──
+  gradeId            String?  // گرید اختصاصی (null = عمومی — برای همه‌ی گریدها)
+  formulaText        String   // متن فرمول محاسبه (مثلاً "base * transport * insurance + tax")
+  sourceType         String   @default("manual") // 'manual' | 'api' — نوع منبع مقدار
+  manualValue        Float?   // مقدار دستی (وقتی sourceType = 'manual')
+  apiSnapshotValue   Float?   // مقدار اسنپشات API (وقتی sourceType = 'api')
+}
+
+// ┌─────────────────────────────────────────────────────────────────────────────
+// │ ۲. WaterfallRule — اضافه کردن شرط و تنظیم
+// └─────────────────────────────────────────────────────────────────────────────
+//
+// فیلدهای موجود (نگه‌داشته می‌شوند):
+//   tierName, discountPercent, priority
+//
+// فیلدهای جدید اضافه‌شونده:
+//
+model WaterfallRule {
+  // ── فیلدهای جدید ──
+  conditionType      String   // نوع شرط: 'price_range' | 'grade_category' | 'specific_grade'
+  conditionValue     String   // مقدار شرط (مثلاً محدوده قیمت یا کد گرید)
+  adjustmentType     String   @default("percentage") // 'percentage' | 'fixed' — نوع تنظیم
+  adjustmentValue    Float    // مقدار تنظیم (مثلاً -2.5 یا 50000)
+}
+
+// ┌─────────────────────────────────────────────────────────────────────────────
+// │ ۳. PaymentTermRule — اضافه کردن روز و درصد تنظیم
+// └─────────────────────────────────────────────────────────────────────────────
+//
+// فیلدهای موجود (نگه‌داشته می‌شوند):
+//   termName, downPaymentPct, creditPct, creditDays, adjustmentPct
+//
+// فیلدهای جدید اضافه‌شونده:
+//
+model PaymentTermRule {
+  // ── فیلدهای جدید ──
+  termDays           Float    // مدت پرداخت به روز (مثلاً 30، 60، 90)
+  adjustmentPercent  Float    @default(0) // ضریب تنظیم قیمت بر اساس مدت پرداخت (%)
+}
+
+// ┌─────────────────────────────────────────────────────────────────────────────
+// │ ۴. VolumeTierRule — اضافه کردن تناژ و انبارداری
+// └─────────────────────────────────────────────────────────────────────────────
+//
+// فیلدهای موجود (نگه‌داشته می‌شوند):
+//   minQuantity, discountPercent
+//
+// فیلدهای جدید اضافه‌شونده:
+//
+model VolumeTierRule {
+  // ── فیلدهای جدید ──
+  minTonnage         Float    // حداقل تناژ (مثلاً 100 تن)
+  adjustmentPercent  Float    @default(0) // ضریب تنظیم قیمت بر اساس حجم (%)
+  storageType        String?  // نوع انبار: 'سراسری' | ' اختصاصی' | null (عمومی)
+}
+
+// ┌─────────────────────────────────────────────────────────────────────────────
+// │ ۵. MarginGuidance — اضافه کردن سطوح سه‌گانه
+// └─────────────────────────────────────────────────────────────────────────────
+//
+// فیلدهای موجود (نگه‌داشته می‌شوند):
+//   gradeId, grade (relation)
+//
+// فیلدهای جدید اضافه‌شونده (جایگزین suggestedMarginPct و note):
+//
+model MarginGuidance {
+  // ── فیلدهای جدید ──
+  floorPercent       Float    // حد پایین حاشیه سود (%)
+  targetPercent      Float    // هدف حاشیه سود (%)
+  stretchPercent     Float    // حداکثر حاشیه سود (%)
+}
+
+// ┌─────────────────────────────────────────────────────────────────────────────
+// │ ۶. ApprovalRule — بدون تغییر ✅
+// └─────────────────────────────────────────────────────────────────────────────
+//
+// این مدل کامل است و با actions.ts تطبیق دارد.
+// فیلدها: entityType, conditionType, thresholdValue, requiredLevel, isActive
+// نیاز به fix2 ندارد.
+
+// ┌─────────────────────────────────────────────────────────────────────────────
+// │ ۷. GlobalBenchmarkPrice — اضافه کردن priceUsd و sourceLabel
+// └─────────────────────────────────────────────────────────────────────────────
+//
+// فیلدهای موجود (نگه‌داشته می‌شوند):
+//   gradeId, grade (relation), basePrice, sourceType, manualValue, apiSnapshotValue
+//
+// فیلدهای جدید اضافه‌شونده:
+//
+model GlobalBenchmarkPrice {
+  // ── فیلدهای جدید ──
+  priceUsd           Float    // قیمت نهایی (دستی یا API — محاسبه‌شده از toggle)
+  sourceLabel        String?  // برچسب منبع (مثلاً 'API' یا 'manual' یا نام ارائه‌دهنده)
+  effectiveDate      DateTime @default(now()) // تاریخ اعمال قیمت
+}
+
+// ┌─────────────────────────────────────────────────────────────────────────────
+// │ ۸. BenchmarkPublishRecord — اضافه کردن mode و snapshot
+// └─────────────────────────────────────────────────────────────────────────────
+//
+// فیلدهای موجود (نگه‌داشته می‌شوند):
+//   gradeId?, status, approvalLevel, publishedById, publishedBy, approvedById, approvedBy
+//
+// فیلدهای جدید اضافه‌شونده:
+//
+model BenchmarkPublishRecord {
+  // ── فیلدهای جدید ──
+  mode               String   @default("global") // 'global' | 'detailed' — حالت انتشار
+  globalAdjustPercent Float?  // درصد تنظیم کلی (در حالت global)
+  detailSnapshot     Json?    // جزئیات ردیف‌به‌ردیف (در حالت detailed — JSON)
+  approvedAt         DateTime? // تاریخ و ساعت تایید نهایی
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// خلاصه فیلدهای اضافه‌شونده به ازای هر مدل
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// | مدل                  | فیلدهای جدید                                                                 |
+// |---------------------|-----------------------------------------------------------------------------|
+// | PriceFormulaRule     | gradeId?, formulaText, sourceType, manualValue?, apiSnapshotValue?          |
+// | WaterfallRule        | conditionType, conditionValue, adjustmentType, adjustmentValue               |
+// | PaymentTermRule      | termDays, adjustmentPercent                                                 |
+// | VolumeTierRule       | minTonnage, adjustmentPercent, storageType?                                 |
+// | MarginGuidance       | floorPercent, targetPercent, stretchPercent                                  |
+// | ApprovalRule         | ✅ بدون تغییر                                                              |
+// | GlobalBenchmarkPrice | priceUsd, sourceLabel?, effectiveDate                                       |
+// | BenchmarkPublishRecord| mode, globalAdjustPercent?, detailSnapshot?, approvedAt?                  |
+//
+// تعداد کل فیلدهای اضافه‌شونده: ۲۳ فیلد در ۷ مدل
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// دستورالعمل merge
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// ۱. ابتدا prisma-schema-delta-group-18.prisma را اعمال کنید (مدل‌های کامل).
+// ۲. سپس فیلدهای بالا را به هر مدل اضافه کنید (البته اگر schema deployed
+//    شما قبلاً این فیلدها را ندارد — بررسی کنید).
+// ۳. اگر schema deployed شما قبلاً برخی فیلدها را دارد (مثلاً floorPercent
+//    در MarginGuidance یا priceUsd در GlobalBenchmarkPrice)، فقط فیلدهای
+//    مفقود را اضافه کنید — فیلدهای موجود را تکرار نکنید.
+// ۴. prisma migrate dev --name add-group18-fix2
+// ۵. prisma generate
+//
+// ═══════════════════════════════════════════════════════════════════════════════
