@@ -10,6 +10,7 @@ import { pageStyle, pageWrapStyle, contentStyle, h1Style, subTitleStyle, cardSty
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 20
+const BRAND_COLOR = '#e65716'
 
 const RECORD_TYPE_LABELS: Record<RecordType, string> = {
   Order: 'سفارش',
@@ -101,6 +102,37 @@ export default async function MyTasksPage({
                   {sec.label}
                   <span style={badgeStyle('danger')}>{allTasks.length}</span>
                 </h3>
+
+                {totalPages > 1 && (
+                  <div style={paginationRow}>
+                    <a
+                      href={buildPageHref(sec.key, Math.max(1, currentPage - 1))}
+                      style={currentPage === 1 ? paginationBtnDisabled : paginationBtn}
+                    >
+                      → قبلی
+                    </a>
+
+                    <div style={paginationNumbersRow}>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                        <a
+                          key={pageNum}
+                          href={buildPageHref(sec.key, pageNum)}
+                          style={pageNum === currentPage ? paginationNumActive : paginationNum}
+                        >
+                          {pageNum.toLocaleString('fa-IR')}
+                        </a>
+                      ))}
+                    </div>
+
+                    <a
+                      href={buildPageHref(sec.key, Math.min(totalPages, currentPage + 1))}
+                      style={currentPage === totalPages ? paginationBtnDisabled : paginationBtn}
+                    >
+                      بعدی ←
+                    </a>
+                  </div>
+                )}
+
                 {pageTasks.map((task) => (
                   <div key={task.id} style={taskRow}>
                     <div>
@@ -111,26 +143,6 @@ export default async function MyTasksPage({
                     <div style={{ fontSize: 11.5, color: '#9199a3', marginTop: 4 }}>از {new Date(task.createdAt).toLocaleDateString('fa-IR')} منتظره</div>
                   </div>
                 ))}
-
-                {totalPages > 1 && (
-                  <div style={paginationRow}>
-                    <a
-                      href={buildPageHref(sec.key, Math.max(1, currentPage - 1))}
-                      style={currentPage === 1 ? paginationBtnDisabled : paginationBtn}
-                    >
-                      → قبلی
-                    </a>
-                    <span style={paginationLabel}>
-                      صفحه {currentPage.toLocaleString('fa-IR')} از {totalPages.toLocaleString('fa-IR')}
-                    </span>
-                    <a
-                      href={buildPageHref(sec.key, Math.min(totalPages, currentPage + 1))}
-                      style={currentPage === totalPages ? paginationBtnDisabled : paginationBtn}
-                    >
-                      بعدی ←
-                    </a>
-                  </div>
-                )}
               </div>
             )
           })}
@@ -145,31 +157,53 @@ const taskRow: React.CSSProperties = { borderTop: '1px solid #eceff3', padding: 
 const paginationRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  justifyContent: 'center',
-  gap: 16,
-  marginTop: 16,
-  paddingTop: 14,
-  borderTop: '1px solid #eceff3',
+  justifyContent: 'space-between',
+  flexWrap: 'wrap',
+  gap: 10,
+  marginBottom: 16,
+  paddingBottom: 14,
+  borderBottom: '1px solid #eceff3',
 }
-const paginationLabel: React.CSSProperties = {
-  fontSize: 12.5,
-  color: '#6f7680',
-  fontFamily: 'monospace',
+const paginationNumbersRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: 6,
 }
 const paginationBtn: React.CSSProperties = {
   fontSize: 12.5,
   fontWeight: 700,
-  color: '#1e357b',
+  color: BRAND_COLOR,
   textDecoration: 'none',
   padding: '6px 14px',
-  border: '1px solid #e3e8ee',
+  border: `1.5px solid ${BRAND_COLOR}`,
   borderRadius: 8,
+  whiteSpace: 'nowrap',
 }
 const paginationBtnDisabled: React.CSSProperties = {
   ...paginationBtn,
   color: '#c2c8d0',
+  borderColor: '#e3e8ee',
   pointerEvents: 'none',
   cursor: 'not-allowed',
 }
+const paginationNum: React.CSSProperties = {
+  fontSize: 12.5,
+  fontWeight: 700,
+  color: BRAND_COLOR,
+  textDecoration: 'none',
+  minWidth: 30,
+  height: 30,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: `1.5px solid ${BRAND_COLOR}`,
+  borderRadius: 8,
+}
+const paginationNumActive: React.CSSProperties = {
+  ...paginationNum,
+  background: BRAND_COLOR,
+  color: '#fff',
+}
 """)
-print("OK: my-tasks/page.tsx جایگزین شد")
+print("OK: my-tasks/page.tsx با پیجینیشن شماره‌دار به‌روزرسانی شد")
